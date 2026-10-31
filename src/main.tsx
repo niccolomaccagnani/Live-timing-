@@ -31,14 +31,18 @@ import {
   Bookmark,
   MoveHorizontal,
 } from "lucide-react";
+import { ConnectionSettings } from "./components/ConnectionSettings";
+import { JsonTimingProvider } from "./providers/json";
+import type { TimingSnapshot } from "./providers/types";
 import { MockTimingProvider } from "./providers/mock";
 import {
   formatTime,
-  average,
   eligible,
   theoretical,
   isAnomaly,
   intervalFromPoints,
+  isShiftShortcut,
+  toggleExclusion,
   RULES,
   type Driver,
   type Analysis,
@@ -55,6 +59,97 @@ function readSaved(): Analysis[] {
   }
 }
 function App() {
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const [sourceUrl, setSourceUrl] = useState(
+    () => localStorage.getItem("race-engineer-url") || "",
+  );
+  const [liveUrl, setLiveUrl] = useState("");
+  const [feedError, setFeedError] = useState("");
+  const [sessionMeta, setSessionMeta] = useState({
+    category: "Motorsport · demo",
+    track: "Monza",
+    session: "Practice 2",
+  });
+  const [excludeMode, setExcludeMode] = useState(false);
+  function applySnapshot(snapshot: TimingSnapshot, reset = true) {
+    setDrivers(snapshot.drivers);
+    setSessionMeta({
+      category: snapshot.category,
+      track: snapshot.track,
+      session: snapshot.session,
+    });
+    if (reset) {
+      setSelected(snapshot.drivers.slice(0, 3).map((d) => d.id));
+      setActive(snapshot.drivers[0]?.id || "");
+      setInterval([
+        Math.min(
+          ...snapshot.drivers.flatMap((d) => d.laps.map((l) => l.number)),
+        ),
+        Math.max(
+          ...snapshot.drivers.flatMap((d) => d.laps.map((l) => l.number)),
+        ),
+      ]);
+      setShifts({});
+      setExcluded({});
+      setAnchor(null);
+      setResults([]);
+      setSector("Latest lap");
+      setShiftMode(false);
+      setExcludeMode(false);
+    }
+  }
+  function saveUrl(url: string) {
+    localStorage.setItem("race-engineer-url", url);
+    setSourceUrl(url);
+  }
+  function connect(url: string, snapshot: TimingSnapshot) {
+    applySnapshot(snapshot);
+    saveUrl(url);
+    setLiveUrl(url);
+    setFeedError("");
+    setConnectionOpen(false);
+    setNotice("Timing feed connected · refreshes every 10 seconds");
+  }
+  function useDemo() {
+    setLiveUrl("");
+    setFeedError("");
+    new MockTimingProvider().getSnapshot().then((s) => applySnapshot(s));
+    setConnectionOpen(false);
+  }
+  useEffect(() => {
+    if (!liveUrl) return;
+    let disposed = false;
+    let controller: AbortController | null = null;
+    const timer = window.setInterval(async () => {
+      if (controller) return;
+      controller = new AbortController();
+      const timeout = window.setTimeout(() => controller?.abort(), 15000);
+      try {
+        const snapshot = await new JsonTimingProvider(liveUrl).getSnapshot(
+          controller.signal,
+        );
+        if (!disposed) {
+          applySnapshot(snapshot, false);
+          setFeedError("");
+          setResults([]);
+        }
+      } catch (e) {
+        if (!disposed)
+          setFeedError(
+            "Feed update failed · displaying the last received data. Check the timing connection.",
+          );
+      } finally {
+        clearTimeout(timeout);
+        controller = null;
+      }
+    }, 10000);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+      controller?.abort();
+    };
+  }, [liveUrl]);
+
   const [drivers, setDrivers] = useState<Driver[]>([]),
     [selected, setSelected] = useState(["FOR", "MIN", "BEG"]),
     [search, setSearch] = useState(""),
@@ -72,7 +167,14 @@ function App() {
     [sector, setSector] = useState("Latest lap");
   const drag = useRef<{ x: number; shift: number } | null>(null);
   useEffect(() => {
-    new MockTimingProvider().getSnapshot().then((s) => setDrivers(s.drivers));
+    new MockTimingProvider().getSnapshot().then((s) => {
+      setDrivers(s.drivers);
+      setSessionMeta({
+        category: s.category,
+        track: s.track,
+        session: s.session,
+      });
+    });
   }, []);
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(history));
@@ -84,6 +186,11 @@ function App() {
     }
   }, [notice]);
   const chosen = drivers.filter((d) => selected.includes(d.id));
+  function eligibleForReview(d: Driver, lap: number) {
+    return eligible(d.laps, interval, excluded[d.id] || [], filters).some(
+      (l) => l.number === lap,
+    );
+  }
   function calculate() {
     const r = analyze(drivers, {
       driverIds: selected,
@@ -108,6 +215,7 @@ function App() {
       results: r,
       rules: RULES,
       report: true,
+      timingSnapshot: structuredClone({ drivers: chosen, ...sessionMeta }),
     };
     setHistory((h) => [a, ...h]);
     setNotice("Analysis saved to your session history");
@@ -125,7 +233,8 @@ function App() {
         )
       )
         return;
-      if (e.altKey && e.key.toLowerCase() === "s") {
+      if (!e.repeat && isShiftShortcut(e)) {
+        setExcludeMode(false);
         e.preventDefault();
         setShiftMode((v) => !v);
       }
@@ -149,18 +258,28 @@ function App() {
     setSelected((s) =>
       s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
     );
+    if (selected.includes(id) && active === id) {
+      setActive(selected.find((x) => x !== id) || "");
+      setShiftMode(false);
+    }
+    if (!selected.includes(id) && !selected.length) setActive(id);
     setResults([]);
   }
   function point(id: string, lap: number, right: boolean) {
     if (right) {
-      setExcluded((e) => {
-        const a = e[id] || [];
-        return {
-          ...e,
-          [id]: a.includes(lap) ? a.filter((n) => n !== lap) : [...a, lap],
-        };
-      });
-      setResults([]);
+      const next = {
+        ...excluded,
+        [id]: toggleExclusion(excluded[id] || [], lap),
+      };
+      setExcluded(next);
+      setResults(
+        analyze(drivers, {
+          driverIds: selected,
+          interval,
+          exclusions: next,
+          filters,
+        }),
+      );
       return;
     }
     if (shiftMode) return;
@@ -174,8 +293,28 @@ function App() {
     }
     setResults([]);
   }
+  const maxLap = Math.max(
+    1,
+    ...drivers.flatMap((d) => d.laps.map((l) => l.number)),
+  );
+  const sectorCount = Math.max(
+    1,
+    ...drivers.flatMap((d) => d.laps.map((l) => l.sectors.length)),
+  );
+  const plotTimes = chosen.flatMap((d) =>
+    d.laps.filter((l) => l.time !== null).map((l) => l.time!),
+  );
+  const yMin = plotTimes.length ? Math.floor(Math.min(...plotTimes)) - 0.2 : 0;
+  const yMax = plotTimes.length ? Math.ceil(Math.max(...plotTimes)) + 0.2 : 1;
+  const activeDriver = drivers.find((d) => d.id === active);
+  function nudgeShift(amount: number) {
+    setShifts((s) => ({ ...s, [active]: (s[active] || 0) + amount }));
+  }
   const chartMin = Math.min(0, ...Object.values(shifts));
-  const chartMax = Math.max(24, ...Object.values(shifts).map((s) => 24 + s));
+  const chartMax = Math.max(
+    maxLap + 1,
+    ...Object.values(shifts).map((s) => maxLap + 1 + s),
+  );
   const chartRows = Array.from({ length: chartMax - chartMin + 1 }, (_, i) => {
     const x = i + chartMin;
     const row: Record<string, number | null> = { lap: x };
@@ -200,6 +339,10 @@ function App() {
     }
   }
   function load(a: Analysis) {
+    if (a.timingSnapshot) {
+      setLiveUrl("");
+      applySnapshot(a.timingSnapshot);
+    }
     setSelected(a.drivers);
     setActive(a.drivers[0] || "FOR");
     setInterval(a.interval);
@@ -236,12 +379,8 @@ function App() {
         <div className="rail-bottom">
           <span className="connection" />
           <button
-            onClick={() =>
-              setNotice(
-                "Mock provider active · no external connection required",
-              )
-            }
-            title="Provider status"
+            onClick={() => setConnectionOpen(true)}
+            title="Timing connection settings"
           >
             <Settings size={20} />
           </button>
@@ -255,17 +394,22 @@ function App() {
             <small>RACE INTELLIGENCE, IN REAL TIME.</small>
           </div>
           <div className="session-select">
-            <span className="f3">F3</span>
+            <span className="f3">RE</span>
             <div>
-              FIA Formula 3 Championship <ChevronDown size={13} />
+              {sessionMeta.category} <ChevronDown size={13} />
               <small>
-                2025 SEASON <span> / </span> ROUND 10
+                ALL CATEGORIES <span> / </span> TIMING & ANALYSIS
               </small>
             </div>
           </div>
           <div className="header-right">
             <span className="sim">
-              <i /> SIMULATED SESSION
+              <i />{" "}
+              {liveUrl
+                ? feedError
+                  ? "FEED STALE"
+                  : "LIVE JSON FEED"
+                : "SIMULATED SESSION"}
             </span>
             <div className="avatar">NM</div>
           </div>
@@ -273,53 +417,68 @@ function App() {
         <div className="page-top">
           <div>
             <div className="eyebrow">
-              WORKSPACE <span>/</span> MONZA
+              WORKSPACE <span>/</span> {sessionMeta.track.toUpperCase()}
             </div>
             <h1>{tab}</h1>
             <p>Every lap. Every sector. The complete picture.</p>
           </div>
-          <button className="outline" onClick={report}>
-            <Download size={15} /> Export report <ArrowUpRight size={13} />
-          </button>
+          <div className="page-actions">
+            <button className="outline" onClick={() => setConnectionOpen(true)}>
+              <Radio size={15} /> Timing connection
+            </button>
+            <button className="outline" onClick={report}>
+              <Download size={15} /> Export report <ArrowUpRight size={13} />
+            </button>
+          </div>
         </div>
         <div className="session-bar">
           <div className="track-icon">⌁</div>
           <div>
-            <strong>MONZA</strong>
+            <strong>{sessionMeta.track}</strong>
             <small>
-              Autodromo Nazionale Monza <span>·</span> 5.793 km
+              {sessionMeta.category} <span>·</span>{" "}
+              {liveUrl ? "External timing feed" : "Demonstration data"}
             </small>
           </div>
           <div className="session-divider" />
           <div>
             <span className="session-label">SESSION</span>
             <strong>
-              Practice 2 <ChevronDown size={12} />
+              {sessionMeta.session} <ChevronDown size={12} />
             </strong>
           </div>
-          <div className="session-divider" />
-          <div>
-            <span className="session-label">TIME REMAINING</span>
-            <strong className="mono">
-              12:48 <span className="live-dot" />
-            </strong>
-          </div>
-          <div className="weather">
-            <span>☀</span>
-            <div>
-              <strong>
-                24°C <small>AIR</small>
-              </strong>
-              <strong>
-                32°C <small>TRACK</small>
-              </strong>
-            </div>
-            <span className="dry">DRY</span>
-          </div>
-          <span className="track-status">
-            <i /> TRACK CLEAR
-          </span>
+          {!liveUrl && (
+            <>
+              <div className="session-divider" />
+              <div>
+                <span className="session-label">DEMO TIME REMAINING</span>
+                <strong className="mono">
+                  12:48 <span className="live-dot" />
+                </strong>
+              </div>
+              <div className="weather">
+                <span>☀</span>
+                <div>
+                  <strong>
+                    24°C <small>AIR</small>
+                  </strong>
+                  <strong>
+                    32°C <small>TRACK</small>
+                  </strong>
+                </div>
+                <span className="dry">DRY</span>
+              </div>
+              <span className="track-status">
+                <i /> DEMO TRACK CLEAR
+              </span>
+            </>
+          )}
         </div>
+        {feedError && (
+          <p role="status" className="feed-error">
+            {feedError}
+          </p>
+        )}
         {tab !== "Timing dashboard" ? (
           <section className="history panel">
             <div className="panel-title">
@@ -429,61 +588,70 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {drivers.map((d, i) => (
-                        <tr
-                          key={d.id}
-                          className={
-                            selected.includes(d.id) ? "selected-row" : ""
-                          }
-                          onClick={() => {
-                            setActive(d.id);
-                            if (!selected.includes(d.id)) toggle(d.id);
-                          }}
-                        >
-                          <td>
-                            <span
-                              className={"position " + (i === 0 ? "first" : "")}
-                            >
-                              {i + 1}
-                            </span>
-                          </td>
-                          <td className="car">
-                            {d.number.toString().padStart(2, "0")}
-                          </td>
-                          <td>
-                            <div className="driver-cell">
-                              <i style={{ background: d.color }} />
-                              <div>
-                                <strong>{d.name}</strong>
-                                <small>{d.team}</small>
-                              </div>
-                            </div>
-                          </td>
-                          <td className={"mono " + (i === 0 ? "purple" : "")}>
-                            {formatTime(latestBest(d))}
-                          </td>
-                          <td className="mono">
-                            {formatTime(d.laps[21].time)}
-                            <sup className="lap-status">IN</sup>
-                          </td>
-                          <td
-                            className={"mono " + (i === 0 ? "lime" : "muted")}
+                      {[...drivers]
+                        .sort((a, b) => latestBest(a) - latestBest(b))
+                        .map((d, i) => (
+                          <tr
+                            key={d.id}
+                            className={
+                              selected.includes(d.id) ? "selected-row" : ""
+                            }
+                            onClick={() => {
+                              setActive(d.id);
+                              if (!selected.includes(d.id)) toggle(d.id);
+                            }}
                           >
-                            {i === 0
-                              ? "LEADER"
-                              : `+${(latestBest(d) - latestBest(drivers[0])).toFixed(3)}`}
-                          </td>
-                        </tr>
-                      ))}
+                            <td>
+                              <span
+                                className={
+                                  "position " + (i === 0 ? "first" : "")
+                                }
+                              >
+                                {i + 1}
+                              </span>
+                            </td>
+                            <td className="car">
+                              {d.number.toString().padStart(2, "0")}
+                            </td>
+                            <td>
+                              <div className="driver-cell">
+                                <i style={{ background: d.color }} />
+                                <div>
+                                  <strong>{d.name}</strong>
+                                  <small>{d.team}</small>
+                                </div>
+                              </div>
+                            </td>
+                            <td className={"mono " + (i === 0 ? "purple" : "")}>
+                              {formatTime(latestBest(d))}
+                            </td>
+                            <td className="mono">
+                              {formatTime(d.laps.at(-1)!.time)}
+                              <sup className="lap-status">
+                                {d.laps.at(-1)!.status.toUpperCase()}
+                              </sup>
+                            </td>
+                            <td
+                              className={"mono " + (i === 0 ? "lime" : "muted")}
+                            >
+                              {i === 0
+                                ? "LEADER"
+                                : Number.isFinite(latestBest(d))
+                                  ? `+${(latestBest(d) - Math.min(...drivers.map(latestBest))).toFixed(3)}`
+                                  : "—"}
+                            </td>
+                          </tr>
+                        ))}
                     </tbody>
                   </table>
                 </div>
                 <div className="panel-footer">
                   <span>
-                    <i className="green-dot" /> 12 drivers on track
+                    <i className="green-dot" /> {drivers.length} drivers in
+                    session
                   </span>
                   <span>
-                    22 laps completed <Clock3 size={12} />
+                    Up to {maxLap} laps recorded <Clock3 size={12} />
                   </span>
                 </div>
               </section>
@@ -497,7 +665,7 @@ function App() {
                     <option>Latest lap</option>
                     <option>Best lap</option>
                     <option>Theoretical best</option>
-                    {Array.from({ length: 22 }, (_, i) => (
+                    {Array.from({ length: maxLap }, (_, i) => (
                       <option key={i}>Lap {i + 1}</option>
                     ))}
                   </select>
@@ -509,9 +677,9 @@ function App() {
                         <th>NO.</th>
                         <th>DRIVER</th>
                         <th>LAP</th>
-                        <th>SECTOR 1</th>
-                        <th>SECTOR 2</th>
-                        <th>SECTOR 3</th>
+                        {Array.from({ length: sectorCount }, (_, i) => (
+                          <th key={i}>SECTOR {i + 1}</th>
+                        ))}
                         <th>LAP TIME</th>
                       </tr>
                     </thead>
@@ -524,17 +692,31 @@ function App() {
                               ? d.laps.reduce(
                                   (a, b) =>
                                     b.status === "valid" &&
-                                    b.time! < (a.time ?? Infinity)
+                                    b.time !== null &&
+                                    b.time <
+                                      (a.status === "valid"
+                                        ? (a.time ?? Infinity)
+                                        : Infinity)
                                       ? b
                                       : a,
-                                  d.laps[1],
+                                  d.laps[0],
                                 )
                               : sector.startsWith("Lap ")
-                                ? d.laps[Number(sector.slice(4)) - 1]
-                                : d.laps[21];
+                                ? (d.laps.find(
+                                    (l) => l.number === Number(sector.slice(4)),
+                                  ) ?? {
+                                    number: Number(sector.slice(4)),
+                                    time: null,
+                                    sectors: Array(sectorCount).fill(0),
+                                    status: "incomplete",
+                                  })
+                                : d.laps.at(-1)!;
                           const sectors =
                             sector === "Theoretical best"
-                              ? [0, 1, 2].map((i) =>
+                              ? Array.from(
+                                  { length: sectorCount },
+                                  (_, i) => i,
+                                ).map((i) =>
                                   Math.min(
                                     ...d.laps
                                       .filter((l) => l.status === "valid")
@@ -748,9 +930,13 @@ function App() {
                   <div className="shift-tools">
                     <button
                       className={shiftMode ? "shift-on" : ""}
-                      onClick={() => setShiftMode((s) => !s)}
+                      onClick={() => {
+                        setShiftMode((s) => !s);
+                        setExcludeMode(false);
+                      }}
                     >
-                      <MoveHorizontal size={13} /> Shift <kbd>Alt S</kbd>
+                      <MoveHorizontal size={13} /> Align runs{" "}
+                      <kbd>⌥ / Alt S</kbd>
                     </button>
                     <button
                       title="Reset all shifts"
@@ -762,6 +948,54 @@ function App() {
                       <RotateCcw size={12} /> Reset
                     </button>
                   </div>
+                </div>
+                <div className="analysis-controls">
+                  <label>
+                    Active driver{" "}
+                    <select
+                      aria-label="Active driver"
+                      value={active}
+                      onChange={(e) => setActive(e.target.value)}
+                    >
+                      {chosen.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.number} · {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className={excludeMode ? "mode-active" : ""}
+                    aria-pressed={excludeMode}
+                    onClick={() => {
+                      setExcludeMode((v) => !v);
+                      setShiftMode(false);
+                    }}
+                  >
+                    Exclude / restore laps
+                  </button>
+                  <span>Shift: {shifts[active] || 0} laps</span>
+                  <button
+                    disabled={!activeDriver || !selected.includes(active)}
+                    aria-label="Shift active driver left"
+                    onClick={() => nudgeShift(-1)}
+                  >
+                    ←
+                  </button>
+                  <button
+                    disabled={!activeDriver || !selected.includes(active)}
+                    aria-label="Shift active driver right"
+                    onClick={() => nudgeShift(1)}
+                  >
+                    →
+                  </button>
+                </div>
+                <div className="mode-hint">
+                  {shiftMode
+                    ? `Aligning ${active}: drag horizontally or use ← →. Option + S on Mac / Alt + S toggles alignment.`
+                    : excludeMode
+                      ? "Click any lap point to exclude it from the average. Click again to restore it. Averages update automatically."
+                      : "Click two lap points for an interval. To remove laps, choose Exclude / restore laps or right-click a point."}
                 </div>
                 <div
                   className={"chart " + (shiftMode ? "shift-mode" : "")}
@@ -817,7 +1051,7 @@ function App() {
                           tickCount={12}
                         />
                         <YAxis
-                          domain={[95, 99]}
+                          domain={[yMin, yMax]}
                           allowDataOverflow
                           tick={{ fill: "#818792", fontSize: 10 }}
                           axisLine={false}
@@ -882,7 +1116,9 @@ function App() {
                                         ? "ew-resize"
                                         : "pointer",
                                     }}
-                                    onClick={() => point(d.id, lap, false)}
+                                    onClick={() =>
+                                      point(d.id, lap, excludeMode)
+                                    }
                                     onContextMenu={(e) => {
                                       e.preventDefault();
                                       point(d.id, lap, true);
@@ -989,6 +1225,54 @@ function App() {
                     excluded
                   </span>
                 </div>
+                <details className="lap-review">
+                  <summary>
+                    Review included laps ·{" "}
+                    {activeDriver?.name || "select a driver"} · original laps{" "}
+                    {interval.join("–")}
+                  </summary>
+                  <div className="lap-chips">
+                    {activeDriver?.laps
+                      .filter(
+                        (l) =>
+                          l.number >= interval[0] && l.number <= interval[1],
+                      )
+                      .map((l) => {
+                        const manual = (excluded[active] || []).includes(
+                          l.number,
+                        );
+                        const included = eligibleForReview(
+                          activeDriver,
+                          l.number,
+                        );
+                        return (
+                          <button
+                            key={l.number}
+                            className={
+                              manual
+                                ? "lap-excluded"
+                                : included
+                                  ? "lap-included"
+                                  : "lap-filtered"
+                            }
+                            onClick={() => point(active, l.number, true)}
+                            aria-pressed={manual}
+                            title={`${l.status}${isAnomaly(activeDriver.laps, activeDriver.laps.indexOf(l)) ? " · anomaly" : ""}${manual ? " · manually excluded" : included ? " · included" : " · filtered by rules"}`}
+                          >
+                            <span>L{l.number}</span>
+                            {formatTime(l.time)}{" "}
+                            <small>
+                              {manual
+                                ? "Excluded · restore"
+                                : included
+                                  ? "Included · exclude"
+                                  : "Filtered by rules"}
+                            </small>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </details>
                 <div className="graph-help">
                   <span>Click two points to select an interval</span>
                   <b>·</b>
@@ -997,7 +1281,7 @@ function App() {
                   <span>
                     {shiftMode
                       ? `Shift ${active}: drag or use ← →`
-                      : "Alt + S to shift a driver"}
+                      : "Option / Alt + S to align runs"}
                   </span>
                 </div>
               </section>
@@ -1015,8 +1299,9 @@ function App() {
         )}
         <footer>
           <span>
-            <i className="green-dot" /> MOCK TIMING PROVIDER <b>·</b> Original
-            timing data preserved
+            <i className="green-dot" />{" "}
+            {liveUrl ? "EXTERNAL JSON PROVIDER" : "MOCK TIMING PROVIDER"}{" "}
+            <b>·</b> Original timing data preserved
           </span>
           <span>
             RACE ENGINEER <b> / </b> ENGINEERED FOR THE EDGE.
@@ -1026,6 +1311,21 @@ function App() {
           </span>
         </footer>
       </div>
+      {connectionOpen && (
+        <ConnectionSettings
+          url={sourceUrl}
+          category={sessionMeta.category}
+          live={!!liveUrl}
+          onClose={() => setConnectionOpen(false)}
+          onCategory={(category) => {
+            setSessionMeta((m) => ({ ...m, category }));
+            setNotice("Category label updated");
+          }}
+          onConnect={connect}
+          onDemo={useDemo}
+          onSaveUrl={saveUrl}
+        />
+      )}
       {notice && (
         <div role="status" className="toast">
           <Check size={16} />

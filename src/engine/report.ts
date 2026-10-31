@@ -5,6 +5,7 @@ export async function exportReport(entries: Analysis[], drivers: Driver[]) {
   for (let i = 0; i < entries.length; i++) {
     if (i) pdf.addPage();
     const a = entries[i];
+    const sourceDrivers = a.timingSnapshot?.drivers ?? drivers;
     pdf.setFillColor(18, 22, 28);
     pdf.rect(0, 0, 210, 35, "F");
     pdf.setTextColor(168, 239, 87);
@@ -12,7 +13,14 @@ export async function exportReport(entries: Analysis[], drivers: Driver[]) {
     pdf.text("RACE ENGINEER", 15, 21);
     pdf.setTextColor(35);
     pdf.setFontSize(11);
-    pdf.text("MONZA / FORMULA 3 / ENGINEERING REPORT", 15, 47);
+    pdf.text(
+      pdf.splitTextToSize(
+        `${a.timingSnapshot?.track ?? "Race session"} / ${a.timingSnapshot?.category ?? "Motorsport"} / ENGINEERING REPORT`,
+        180,
+      ),
+      15,
+      47,
+    );
     pdf.text(
       `${new Date(a.created).toLocaleString()} | Original laps ${a.interval.join(" - ")}`,
       15,
@@ -20,9 +28,13 @@ export async function exportReport(entries: Analysis[], drivers: Driver[]) {
     );
     let y = 70;
     a.results.forEach((r) => {
-      const d = drivers.find((d) => d.id === r.id)!;
+      if (y > 240) {
+        pdf.addPage();
+        y = 20;
+      }
+      const d = sourceDrivers.find((d) => d.id === r.id)!;
       pdf.text(
-        `${d.name}: ${formatTime(r.mean)} average | ${r.count} included laps`,
+        `${d?.name ?? r.id}: ${formatTime(r.mean)} average | ${r.count} included laps`,
         15,
         y,
       );
@@ -34,6 +46,10 @@ export async function exportReport(entries: Analysis[], drivers: Driver[]) {
       );
       y += 12;
     });
+    if (y > 210) {
+      pdf.addPage();
+      y = 20;
+    }
     const valid = a.results
       .filter((r) => r.mean !== null)
       .sort((x, y) => x.mean! - y.mean!);
@@ -58,7 +74,7 @@ export async function exportReport(entries: Analysis[], drivers: Driver[]) {
     );
     y += 7;
     a.drivers.forEach((id) => {
-      const d = drivers.find((d) => d.id === id);
+      const d = sourceDrivers.find((d) => d.id === id);
       if (d) {
         if (y > 245) {
           pdf.addPage();
@@ -84,7 +100,7 @@ export async function exportReport(entries: Analysis[], drivers: Driver[]) {
       15,
       29,
     );
-    const plotDrivers = drivers.filter((d) => a.drivers.includes(d.id));
+    const plotDrivers = sourceDrivers.filter((d) => a.drivers.includes(d.id));
     const points = plotDrivers.flatMap((d) =>
       d.laps
         .filter((l) => l.time !== null)
@@ -127,5 +143,5 @@ export async function exportReport(entries: Analysis[], drivers: Driver[]) {
       pdf.text(`${d.short}: shift ${a.shifts[d.id] || 0}`, 20, 158 + index * 7);
     });
   }
-  pdf.save("Race-Engineer-Monza-report.pdf");
+  pdf.save("Race-Engineer-daily-report.pdf");
 }

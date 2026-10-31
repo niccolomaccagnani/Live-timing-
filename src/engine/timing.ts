@@ -2,7 +2,7 @@ export type LapStatus = "valid" | "in" | "out" | "invalid" | "incomplete";
 export interface Lap {
   number: number;
   time: number | null;
-  sectors: [number, number, number];
+  sectors: number[];
   status: LapStatus;
 }
 export interface Driver {
@@ -29,6 +29,8 @@ export function isAnomaly(laps: Lap[], i: number) {
     b &&
     c &&
     [a, b, c].every((l) => l.status === "valid" && l.time !== null) &&
+    a.number + 1 === b.number &&
+    b.number + 1 === c.number &&
     b.time! - a.time! >= 0.8 - 1e-9 &&
     b.time! - c.time! >= 0.8 - 1e-9
   );
@@ -70,16 +72,17 @@ export function theoretical(laps: Lap[]) {
       l.sectors.every((s) => s > 0 && Number.isFinite(s)),
   );
   return valid.length
-    ? [0, 1, 2]
+    ? Array.from({ length: valid[0].sectors.length }, (_, i) => i)
         .map((i) => Math.min(...valid.map((l) => l.sectors[i])))
         .reduce((a, b) => a + b, 0)
     : null;
 }
 export function formatTime(time: number | null) {
-  if (time === null) return "—";
+  if (time === null || !Number.isFinite(time)) return "—";
   return `${Math.floor(time / 60)}:${(time % 60).toFixed(3).padStart(6, "0")}`;
 }
 export interface Analysis {
+  timingSnapshot?: import("../providers/types").TimingSnapshot;
   id: string;
   title: string;
   created: string;
@@ -96,4 +99,17 @@ export interface Analysis {
   }[];
   rules: string;
   report: boolean;
+}
+
+export function isShiftShortcut(e: {
+  altKey: boolean;
+  code: string;
+  key: string;
+}) {
+  return e.altKey && (e.code === "KeyS" || e.key.toLowerCase() === "s");
+}
+export function toggleExclusion(excluded: number[], lap: number) {
+  return excluded.includes(lap)
+    ? excluded.filter((n) => n !== lap)
+    : [...excluded, lap];
 }

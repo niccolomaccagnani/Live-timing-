@@ -1363,3 +1363,234 @@ footer span:nth-child(2) {
   margin-left: 3px;
   vertical-align: middle;
 }
+.page-actions {
+  display: flex;
+  gap: 9px;
+}
+.analysis-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 17px 5px;
+  color: #9ca8b6;
+  font-size: 9px;
+}
+.analysis-controls label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.analysis-controls select {
+  max-width: 150px;
+  background: #13181f;
+  border: 1px solid #3d4754;
+  border-radius: 4px;
+  padding: 5px;
+  font-size: 9px;
+}
+.analysis-controls button {
+  border: 1px solid #3b4652;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 9px;
+  background: #242b34;
+}
+.analysis-controls .mode-active {
+  color: #ff9ca2;
+  border-color: #99585d;
+  background: #442b31;
+}
+.mode-hint {
+  font-size: 8px;
+  color: #98a6b5;
+  line-height: 1.6;
+  padding: 5px 17px 8px;
+  min-height: 28px;
+}
+.lap-review {
+  border-top: 1px solid #303640;
+  padding: 12px 17px;
+  color: #9daab9;
+  font-size: 9px;
+}
+.lap-review summary {
+  cursor: pointer;
+}
+.lap-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+  max-height: 190px;
+  overflow: auto;
+}
+.lap-chips button {
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 7px 9px;
+  border: 1px solid #3d4c3a;
+  border-radius: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  gap: 3px;
+}
+.lap-chips span {
+  font-size: 8px;
+  color: #9ca9b8;
+}
+.lap-chips small {
+  font:
+    7px Inter,
+    sans-serif;
+  color: #9dae9a;
+}
+.lap-chips .lap-excluded {
+  border-color: #ad555d;
+  background: #3c252c;
+  color: #ff8c95;
+}
+.lap-chips .lap-excluded small {
+  color: #ff9da7;
+}
+.lap-chips .lap-filtered {
+  border-color: #4c4650;
+  background: #28242a;
+  color: #9a92a0;
+}
+.feed-error {
+  border: 1px solid #856b3e;
+  color: #eac78d;
+  background: #30291f;
+  padding: 12px;
+  font-size: 11px;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #05080dc7;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  backdrop-filter: blur(5px);
+}
+.connection-dialog {
+  width: 590px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  background: #1b2028;
+  border: 1px solid #44505d;
+  border-radius: 8px;
+  box-shadow: 0 20px 80px #0009;
+}
+.connection-dialog .panel-title {
+  justify-content: space-between;
+}
+.connection-body {
+  padding: 20px;
+}
+.connection-body p {
+  color: #a3b0be;
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 0 0 15px;
+}
+.connection-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 16px 0 10px;
+}
+.connection-body input {
+  background: #12171e;
+  border: 1px solid #44505e;
+  color: #edf1f7;
+  border-radius: 4px;
+  padding: 11px;
+  font-size: 12px;
+  width: 100%;
+}
+.connection-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 17px 0;
+}
+.connection-body .connection-status {
+  color: #b9df94;
+  font-size: 10px;
+  border: 1px solid #415335;
+  background: #242e20;
+  padding: 11px;
+  border-radius: 4px;
+}
+.connection-body details {
+  color: #a6b1bf;
+  font-size: 10px;
+  line-height: 1.8;
+}
+.connection-body summary {
+  cursor: pointer;
+}
+.connection-body pre {
+  font-size: 9px;
+  overflow: auto;
+  padding: 12px;
+  background: #12171f;
+  border-radius: 4px;
+}
+.graph-panel .shift-tools button {
+  font-size: 9px;
+}
+.graph-panel .shift-tools kbd {
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .page-actions {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .page-top .page-actions .outline {
+    font-size: 8px;
+  }
+  .analysis-controls {
+    padding: 10px;
+    font-size: 8px;
+    gap: 5px;
+  }
+  .analysis-controls select {
+    max-width: 120px;
+  }
+  .mode-hint {
+    padding: 5px 10px;
+    font-size: 8px;
+  }
+  .modal-backdrop {
+    padding: 10px;
+  }
+  .connection-body {
+    padding: 15px;
+  }
+  .connection-dialog .panel-title h2 {
+    font-size: 11px;
+  }
+  .connection-actions .outline,
+  .connection-actions .primary {
+    font-size: 9px;
+    padding: 9px;
+  }
+  .session-bar > div:nth-child(2) > strong {
+    font-size: 12px;
+    max-width: 160px;
+  }
+  .graph-help {
+    height: auto;
+    padding: 10px;
+    flex-wrap: wrap;
+  }
+}

@@ -1,12 +1,5 @@
 import type { Driver } from "../engine/timing";
-export interface TimingSnapshot {
-  drivers: Driver[];
-  session: string;
-  track: string;
-}
-export interface TimingProvider {
-  getSnapshot(): Promise<TimingSnapshot>;
-}
+import type { TimingProvider } from "./types";
 const roster: [number, string, string, string, string][] = [
   [1, "Leonardo Fornaroli", "FOR", "Trident", "#a8ef57"],
   [4, "Gabriele Minì", "MIN", "PREMA Racing", "#b19cff"],
@@ -74,6 +67,7 @@ export class MockTimingProvider implements TimingProvider {
       drivers,
       session: "Practice 2",
       track: "Autodromo Nazionale Monza",
+      category: "Formula 3 · demo",
     };
   }
 }
